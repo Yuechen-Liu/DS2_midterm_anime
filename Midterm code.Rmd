@@ -7,4 +7,204 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(caret)
+library(pROC)
+library(glmnet)
+library(ISLR)
+library(MASS)
+library(e1071)
+library(mlbench)
+library(AppliedPredictiveModeling)
+```
+
+```{r}
+###load and clean data
+stroke_df <- read_csv("healthcare-dataset-stroke-data.csv") %>%
+  janitor::clean_names() %>%
+  filter(bmi != 'N/A') %>% 
+  filter(smoking_status != 'Unknown') %>% 
+  mutate(gender = case_when(gender == 'Male' ~ 0,
+                   gender == 'Female' ~ 1,
+                   gender == 'Other' ~ 2)) %>% 
+  mutate(ever_married = case_when(ever_married == 'Yes' ~ 1,
+                           ever_married == 'No' ~ 0)) %>% 
+  mutate(residence_type = case_when(residence_type == 'Rural' ~ 0,
+                                    residence_type == 'Urban' ~ 1)) %>%
+  mutate(smoking_status = case_when(smoking_status == 'never smoked' ~ 0,
+                                    smoking_status == 'smokes' ~ 1,
+                                    smoking_status == 'formerly smoked' ~ 2)) %>%
+  mutate(work_type = case_when(work_type == 'children' ~ 0,
+                               work_type == 'Govt_job' ~ 1,
+                               work_type == 'Private' ~ 2,
+                               work_type == 'Never_worked' ~ 3,
+                               work_type == 'Self-employed' ~ 4)) %>% 
+  mutate(bmi = as.numeric(bmi))
+```
+
+
+```{r}
+### Explanatory analysis -- for predictor selection
+theme1 = transparentTheme(trans = .4)
+pairs(stroke_df)
+featurePlot(x = stroke_df[,2:10],
+            y = stroke_df$stroke,
+            scales = list(x = list(relation = "free"), 
+            y = list(relation ="free")),  
+            plot = "density",
+            pch = "|",
+            auto.key = list(columns = 2))
+```
+
+```{r}
+###Perform logistic regression
+stroke_df_factor = 
+  stroke_df%>% 
+  mutate(gender = as.factor(gender)) %>% 
+  mutate(hypertension = as.factor(hypertension)) %>% 
+  mutate(heart_disease= as.factor(heart_disease)) %>% 
+  mutate(ever_married = as.factor(ever_married)) %>% 
+  mutate(work_type = as.factor(work_type)) %>% 
+  mutate(residence_type = as.factor(residence_type)) %>% 
+  mutate(smoking_status = as.factor(smoking_status)) %>% 
+  mutate(stroke = as.factor(stroke))
+train = stroke_df_factor %>% 
+  filter(id >15000)
+test = stroke_df_factor %>% 
+  filter(id <15000)
+glm.fit1 <- glm(stroke ~ gender + age + hypertension + heart_disease + ever_married + work_type + residence_type + avg_glucose_level + bmi + smoking_status, 
+               data = train,
+               family = binomial)
+summary(glm.fit1)
+
+
+```
+
+
+```{r}
+###Draw a confusion matrix
+test_pred_prob <- predict(glm.fit1, newdata = test,
+                          type = "response")
+test_pred <- rep("0", length(test_pred_prob))
+test_pred[test_pred_prob > 0.5] = "1"
+CM = confusionMatrix(data = as.factor(test_pred),
+                reference = test$stroke,
+                positive = "1")
+CM
+
+```
+
+```{r}
+###Fit a new logistic regression model, using the significant predictors interpreted from the former model.
+glm.fit2 <- glm(stroke ~ age + hypertension + heart_disease + avg_glucose_level, 
+               data = train,
+               family = binomial)
+summary(glm.fit2)
+###Plot the ROC curve using the test data and report the AUC
+glm2_test <- predict(glm.fit2, type = "response", newdata = test)
+roc_split <- roc(test$stroke, glm2_test)
+plot(roc_split, legacy.axes = TRUE, print.auc = TRUE)
+plot(smooth(roc_split), col = 4, add = TRUE)
+###AUC is 0.811
+###LDA
+fit.lda = lda(stroke ~ age + hypertension + heart_disease + avg_glucose_level, data = train)
+lda_pred <- predict(fit.lda, newdata = test)
+roc_lda <- roc(test$stroke, lda_pred$posterior[,2])
+plot(roc_lda, legacy.axes = TRUE, print.auc = TRUE)
+plot(smooth(roc_lda), col = 4, add = TRUE)
+###AUC is 0.801
+###QDA
+fit.qda = qda(stroke ~ age + hypertension + heart_disease + avg_glucose_level, data = train)
+qda_pred <- predict(fit.qda, newdata = test)
+roc_qda <- roc(test$stroke, qda_pred$posterior[,2])
+plot(roc_qda, legacy.axes = TRUE, print.auc = TRUE)
+plot(smooth(roc_qda), col = 4, add = TRUE)
+###AUC is 0.797
+
+
+```
+
+```{r}
+###KNN
+set.seed(1)
+
+train_1 = train %>% 
+  dplyr::select(age, hypertension, heart_disease, avg_glucose_level,stroke) %>% 
+  mutate(stroke = case_when(stroke == '0' ~ 'No',
+                            stroke == '1' ~ 'Yes'))
+test_1 = test %>% 
+  dplyr::select(age, hypertension, heart_disease, avg_glucose_level, stroke) %>% 
+  mutate(stroke = case_when(stroke == '0' ~ 'No',
+                            stroke == '1' ~ 'Yes'))
+control1 <- trainControl(method = "repeatedcv",
+                     repeats = 5,
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE)
+knn_model <- train(x = train_1[1:4],
+                   y = train_1$stroke,
+                   method = "knn",
+                   metric = "ROC",
+                   preProcess = c("center", "scale"),
+                   tuneGrid = data.frame(k = seq(1, 200, by = 5)),
+                   trControl = control1)
+ggplot(knn_model)
+knn_predict =  predict(knn_model, newdata = test_1 , type = "prob")
+roc_knn = roc(test$stroke, knn_predict$Yes, levels = c("No", "Yes"))
+plot(roc_knn, legacy.axes = TRUE, print.auc = TRUE)
+plot(smooth(roc_knn), col = 4, add = TRUE)
+
+
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+
+```{r}
+
+```
+
+
+
+
+```{r}
+
+```
+
+
+
+```{r}
+
+```
+
+
+
+```{r}
+
+```
+
+
+
+```{r}
+
+```
+
+
+
+```{r}
+
 ```
