@@ -16,6 +16,8 @@ library(MASS)
 library(e1071)
 library(mlbench)
 library(AppliedPredictiveModeling)
+library(tibble)
+library(corrplot)
 ```
 
 ```{r}
@@ -54,6 +56,9 @@ featurePlot(x = stroke_df[,2:10],
             plot = "density",
             pch = "|",
             auto.key = list(columns = 2))
+
+##correlation plot
+corrplot(cor(stroke_df), method = 'circle', type = 'full')
 ```
 
 ```{r}
@@ -105,13 +110,14 @@ glm2_test <- predict(glm.fit2, type = "response", newdata = test)
 roc_split <- roc(test$stroke, glm2_test)
 plot(roc_split, legacy.axes = TRUE, print.auc = TRUE)
 plot(smooth(roc_split), col = 4, add = TRUE)
+
 ###AUC is 0.811
 ###LDA
 fit.lda = lda(stroke ~ age + hypertension + heart_disease + avg_glucose_level, data = train)
 lda_pred <- predict(fit.lda, newdata = test)
 roc_lda <- roc(test$stroke, lda_pred$posterior[,2])
-plot(roc_lda, legacy.axes = TRUE, print.auc = TRUE)
-plot(smooth(roc_lda), col = 4, add = TRUE)
+ldaplot = plot(roc_lda, legacy.axes = TRUE, print.auc = TRUE) %>%
+  plot(smooth(roc_lda), col = 4, add = TRUE)
 ###AUC is 0.801
 ###QDA
 fit.qda = qda(stroke ~ age + hypertension + heart_disease + avg_glucose_level, data = train)
@@ -124,18 +130,22 @@ plot(smooth(roc_qda), col = 4, add = TRUE)
 
 ```
 
-```{r}
+```{r, warning = FALSE}
 ###KNN
 set.seed(1)
 
 train_1 = train %>% 
   dplyr::select(age, hypertension, heart_disease, avg_glucose_level,stroke) %>% 
-  mutate(stroke = case_when(stroke == '0' ~ 'No',
-                            stroke == '1' ~ 'Yes'))
+  mutate(stroke = recode(stroke,'0' = 'No',
+                         '1'= 'Yes'))
+train_1$rownames <- paste0("id", seq(1, nrow(train_1)))
+head(train_1, n=2)
 test_1 = test %>% 
   dplyr::select(age, hypertension, heart_disease, avg_glucose_level, stroke) %>% 
-  mutate(stroke = case_when(stroke == '0' ~ 'No',
-                            stroke == '1' ~ 'Yes'))
+  mutate(stroke = recode(stroke,'0' = 'No',
+                         '1'= 'Yes'))
+test_1$rownames <- paste0("id", seq(1, nrow(test_1)))
+head(test_1, n =2)
 control1 <- trainControl(method = "repeatedcv",
                      repeats = 5,
                      summaryFunction = twoClassSummary,
@@ -149,62 +159,10 @@ knn_model <- train(x = train_1[1:4],
                    trControl = control1)
 ggplot(knn_model)
 knn_predict =  predict(knn_model, newdata = test_1 , type = "prob")
-roc_knn = roc(test$stroke, knn_predict$Yes, levels = c("No", "Yes"))
+roc_knn = roc(test_1$stroke, knn_predict$Yes, levels = c("No", "Yes"))
 plot(roc_knn, legacy.axes = TRUE, print.auc = TRUE)
 plot(smooth(roc_knn), col = 4, add = TRUE)
+###AUC= 0.796
 
-
-
-```
-
-
-```{r}
-
-```
-
-
-```{r}
-
-```
-
-
-```{r}
-
-```
-
-
-
-```{r}
-
-```
-
-
-
-
-```{r}
-
-```
-
-
-
-```{r}
-
-```
-
-
-
-```{r}
-
-```
-
-
-
-```{r}
-
-```
-
-
-
-```{r}
 
 ```
